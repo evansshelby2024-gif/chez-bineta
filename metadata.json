@@ -1,0 +1,6 @@
+{
+  "name": "Chez Bineta - Commande & Délices",
+  "description": "Application web officielle de Chez Bineta à Saint-Louis, Ngallel : Mini Tacos, Mini Pizza, Fataya, Nems, Poutine. Retrait sur place et livraison.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

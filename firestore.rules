@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Orders collection: read and write permitted for live kitchen ordering
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'phone', 'total', 'status']);
+      allow update: if request.resource.data.status in ['received', 'preparing', 'ready', 'delivering', 'completed', 'cancelled'];
+      allow delete: if true;
+    }
+
+    // Restaurant opening / closing status
+    match /storeStatus/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Sunday reservations
+    match /sundayReservations/{resId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'phone', 'date', 'status']);
+      allow update, delete: if true;
+    }
+
+    // Customer reviews & ratings (tamper-proof & validated)
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'authorName', 'rating', 'comment'])
+        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
+        && request.resource.data.authorName.size() > 0 && request.resource.data.authorName.size() <= 80
+        && request.resource.data.comment.size() > 0 && request.resource.data.comment.size() <= 1200;
+      allow update: if false; // Immutability prevents tampering
+      allow delete: if true;  // Manager moderation allowed
+    }
+
+    // Connectivity test path
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

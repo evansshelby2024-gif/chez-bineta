@@ -1,0 +1,203 @@
+{
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "Customer food order at Chez Bineta",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique human readable ID, e.g. #CB-1043"
+        },
+        "numericId": {
+          "type": "number",
+          "description": "Incremental order number"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Full name of the ordering customer"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["retrait", "livraison"],
+          "description": "Delivery or take-out mode"
+        },
+        "pickupTime": {
+          "type": "string",
+          "description": "Desired pickup time"
+        },
+        "address": {
+          "type": "string",
+          "description": "Delivery address"
+        },
+        "quartier": {
+          "type": "string",
+          "description": "Neighborhood in Saint-Louis"
+        },
+        "indications": {
+          "type": "string",
+          "description": "Delivery instructions"
+        },
+        "items": {
+          "type": "string",
+          "description": "JSON serialized items or array description"
+        },
+        "total": {
+          "type": "number",
+          "description": "Total order amount in FCFA"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["especes_retrait", "especes_livraison"],
+          "description": "Cash on delivery or on pickup"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["received", "preparing", "ready", "delivering", "completed", "cancelled"],
+          "description": "Live state of the order"
+        },
+        "rejectionReason": {
+          "type": "string",
+          "description": "Reason communicated if rejected"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Special customer instructions"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of order placement"
+        }
+      },
+      "required": ["id", "customerName", "phone", "mode", "total", "status", "createdAt"]
+    },
+    "StoreConfig": {
+      "title": "StoreConfig",
+      "description": "Opening and operational status of Chez Bineta restaurant",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["open", "closed", "reservation_only"],
+          "description": "Current status of the kitchen/store"
+        },
+        "storeClosureMessage": {
+          "type": "string",
+          "description": "Message displayed to customers when store is closed"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["status"]
+    },
+    "SundayReservation": {
+      "title": "SundayReservation",
+      "description": "Reservation for Sunday gourmet menu at Chez Bineta",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique reservation identifier"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer name"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Customer phone"
+        },
+        "date": {
+          "type": "string",
+          "description": "Reservation date"
+        },
+        "time": {
+          "type": "string",
+          "description": "Reservation time"
+        },
+        "guestCount": {
+          "type": "number",
+          "description": "Number of guests"
+        },
+        "dishesDesired": {
+          "type": "string",
+          "description": "Desired dishes or menu selections"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Special requests"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "cancelled"],
+          "description": "Status of the reservation"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["id", "customerName", "phone", "date", "status"]
+    },
+    "CustomerReview": {
+      "title": "CustomerReview",
+      "description": "Customer ratings, stars and reviews for Chez Bineta",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique review identifier"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Author of the review"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Rating score between 1 and 5 stars"
+        },
+        "dishOrdered": {
+          "type": "string",
+          "description": "Optional name of dish reviewed"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Customer written review comment"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of the review"
+        },
+        "verifiedBuyer": {
+          "type": "string",
+          "description": "Verified client flag"
+        }
+      },
+      "required": ["id", "authorName", "rating", "comment", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Live and historical food orders placed by customers and managed by the seller"
+    },
+    "/storeStatus/{docId}": {
+      "schema": "StoreConfig",
+      "description": "Configuration document representing open/closed status of the restaurant"
+    },
+    "/sundayReservations/{resId}": {
+      "schema": "SundayReservation",
+      "description": "Sunday special menu table reservations"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "CustomerReview",
+      "description": "Customer community reviews and star ratings"
+    }
+  }
+}
