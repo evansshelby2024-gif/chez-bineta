@@ -23,6 +23,7 @@ import {
   testSupabaseConnection,
   syncOrderToSupabase,
   syncProductToSupabase,
+  fetchSupabaseOrders,
   subscribeToSupabaseOrders,
   verifyAdminPinRPC,
   updateAdminPinRPC,
@@ -958,6 +959,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }, (err) => {
         console.warn('[Firestore] Orders listener warning:', err);
+      });
+
+      // Load existing orders from Supabase on startup/refresh
+      fetchSupabaseOrders().then(({ data, error }) => {
+        if (error) return;
+        const loadedOrders: Order[] = (data || []).map((row: any) => ({
+          id: row.id,
+          numericId: row.numeric_id,
+          customerName: row.customer_name,
+          phone: row.phone,
+          mode: row.mode,
+          pickupTime: row.pickup_time,
+          address: row.address,
+          quartier: row.quartier,
+          indications: row.indications,
+          total: Number(row.total),
+          paymentMethod: row.payment_method,
+          status: row.status,
+          notes: row.notes,
+          items: row.items || [],
+          createdAt: row.created_at,
+        }));
+        if (loadedOrders.length > 0) setOrders(loadedOrders);
       });
 
       // Also listen to Supabase Realtime if connected

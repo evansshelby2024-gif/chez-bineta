@@ -344,3 +344,20 @@ export const subscribeToSupabaseOrders = (
   }
 };
 
+
+export const fetchSupabaseOrders = async () => {
+  const client = getSupabaseClient();
+  if (!client) return { data: [], error: new Error('Supabase non configuré') };
+
+  const { data, error } = await client
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.warn('[Supabase] fetch orders error:', error);
+  }
+
+  return { data: data || [], error };
+};
+
