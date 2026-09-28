@@ -962,12 +962,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Also listen to Supabase Realtime if connected
       const unsubSupabase = subscribeToSupabaseOrders((payload) => {
-        if (payload.eventType === 'INSERT') {
-          const newOrder = payload.new;
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const row = payload.new;
+          const newOrder: Order = {
+            id: row.id,
+            numericId: row.numeric_id,
+            customerName: row.customer_name,
+            phone: row.phone,
+            mode: row.mode,
+            pickupTime: row.pickup_time,
+            address: row.address,
+            quartier: row.quartier,
+            indications: row.indications,
+            total: Number(row.total),
+            paymentMethod: row.payment_method,
+            status: row.status,
+            notes: row.notes,
+            items: row.items || [],
+            createdAt: row.created_at,
+          };
+
+          setOrders((prev) => [
+            newOrder,
+            ...prev.filter((o) => o.id !== newOrder.id)
+          ]);
+
           if (userRoleRef.current === 'seller' || isAdminLoggedIn) {
             soundEffects.playNewOrder();
-            showToast(`⚡ Nouvelle commande Supabase : ${newOrder.id}`, 'warning');
+            showToast(`⚡ Nouvelle commande : ${newOrder.id}`, 'warning');
+            setLatestRealtimeEvent({
+              type: 'NEW_ORDER',
+              order: newOrder,
+              sender: 'customer',
+              timestamp: Date.now(),
+            });
           }
+        }
+
+        if (payload.eventType === 'UPDATE' && payload.new) {
+          const row = payload.new;
+          setOrders((prev) =>
+            prev.map((o) =>
+              o.id === row.id
+                ? { ...o, status: row.status }
+                : o
+            )
+          );
         }
       });
 
