@@ -1,12 +1,29 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
+import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import crypto from 'crypto';
 
 const app = express();
 const PORT = 3000;
+const supabaseServer = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
 app.use(express.json());
+app.get("/api/admin/orders", async (req: Request, res: Response) => {
+  try {
+    const token = String(req.headers.authorization || "").replace(/^Bearer /, "");
+    const [timestamp, signature] = token.split(":");
+    const expected = crypto.createHmac("sha256", SERVER_SECRET).update(`admin:${timestamp}`).digest("hex");
+    if (!timestamp || !signature || signature !== expected || Date.now() - Number(timestamp) > 24 * 60 * 60 * 1000) {
+      return res.status(401).json({ error: "Non autorisé" });
+    }
+    const { data, error } = await supabaseServer.from("orders").select("*").order("created_at", { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ data });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 // Server-side State & Admin Security (Never exposed to client bundle)
 let SERVER_ADMIN_PIN = process.env.ADMIN_PIN || '1234';

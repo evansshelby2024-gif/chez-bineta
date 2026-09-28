@@ -962,27 +962,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       // Load existing orders from Supabase on startup/refresh
-      fetchSupabaseOrders().then(({ data, error }) => {
-        if (error) return;
-        const loadedOrders: Order[] = (data || []).map((row: any) => ({
-          id: row.id,
-          numericId: row.numeric_id,
-          customerName: row.customer_name,
-          phone: row.phone,
-          mode: row.mode,
-          pickupTime: row.pickup_time,
-          address: row.address,
-          quartier: row.quartier,
-          indications: row.indications,
-          total: Number(row.total),
-          paymentMethod: row.payment_method,
-          status: row.status,
-          notes: row.notes,
-          items: row.items || [],
-          createdAt: row.created_at,
-        }));
-        if (loadedOrders.length > 0) setOrders(loadedOrders);
-      });
+      const adminToken = sessionStorage.getItem('chez_bineta_admin_token');
+      if (adminToken) {
+        fetch('/api/admin/orders', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        })
+          .then((res) => res.ok ? res.json() : { data: [] })
+          .then(({ data }) => {
+            const loadedOrders: Order[] = (data || []).map((row: any) => ({
+              id: row.id,
+              numericId: row.numeric_id,
+              customerName: row.customer_name,
+              phone: row.phone,
+              mode: row.mode,
+              pickupTime: row.pickup_time,
+              address: row.address,
+              quartier: row.quartier,
+              indications: row.indications,
+              total: Number(row.total),
+              paymentMethod: row.payment_method,
+              status: row.status,
+              notes: row.notes,
+              items: row.items || [],
+              createdAt: row.created_at,
+            }));
+            if (loadedOrders.length > 0) setOrders(loadedOrders);
+          })
+          .catch(() => {});
+      } else {
+        fetchSupabaseOrders().then(({ data, error }) => {
+          if (error) return;
+          const loadedOrders: Order[] = (data || []).map((row: any) => ({
+            id: row.id,
+            numericId: row.numeric_id,
+            customerName: row.customer_name,
+            phone: row.phone,
+            mode: row.mode,
+            pickupTime: row.pickup_time,
+            address: row.address,
+            quartier: row.quartier,
+            indications: row.indications,
+            total: Number(row.total),
+            paymentMethod: row.payment_method,
+            status: row.status,
+            notes: row.notes,
+            items: row.items || [],
+            createdAt: row.created_at,
+          }));
+          if (loadedOrders.length > 0) setOrders(loadedOrders);
+        });
+      }
 
       // Also listen to Supabase Realtime if connected
       const unsubSupabase = subscribeToSupabaseOrders((payload) => {
@@ -1648,6 +1677,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const res = await verifyAdminPinRPC(pin);
 
     if (res.success) {
+      try {
+        const tokenRes = await fetch('/api/admin/verify-pin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pin.trim() }),
+        });
+        const tokenData = await tokenRes.json();
+        if (tokenRes.ok && tokenData.token) {
+          sessionStorage.setItem('chez_bineta_admin_token', tokenData.token);
+        }
+      } catch {}
       setIsAdminLoggedIn(true);
       setUserRole('seller');
       setIsRoleModalOpen(false);
