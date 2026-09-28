@@ -18,6 +18,8 @@ import { ContactSection } from './components/ContactSection';
 import { AdminDashboard } from './components/AdminDashboard';
 import { SellerHeader } from './components/SellerHeader';
 import { RoleSwitchModal } from './components/RoleSwitchModal';
+import { SupabaseAuthModal } from './components/SupabaseAuthModal';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
 import { Footer } from './components/Footer';
 import { SundayModal } from './components/SundayModal';
 import { CheckoutModal } from './components/CheckoutModal';
@@ -401,6 +403,12 @@ const AppContent: React.FC = () => {
 
       {/* Role Switcher Modal */}
       <RoleSwitchModal />
+
+      {/* Supabase Auth Modal with RLS */}
+      <SupabaseAuthModal />
+
+      {/* PWA Install Banner Prompt (Installe directement sans passer par Play Store) */}
+      <PWAInstallBanner />
     </div>
   );
 };

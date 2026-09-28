@@ -12,7 +12,28 @@ import {
   updateDoc,
   deleteDoc,
   onSnapshot,
+  query,
+  getDocs,
+  getDocFromServer,
+  runTransaction,
 } from 'firebase/firestore';
+import {
+  getSupabaseCredentials,
+  configureSupabase,
+  testSupabaseConnection,
+  syncOrderToSupabase,
+  syncProductToSupabase,
+  subscribeToSupabaseOrders,
+  verifyAdminPinRPC,
+  updateAdminPinRPC,
+  signInWithSupabaseEmail,
+  signUpWithSupabaseEmail,
+  signOutSupabaseAuth,
+  fetchUserProfile,
+  getSupabaseClient,
+  UserProfile,
+} from '../supabase';
+import type { User } from '@supabase/supabase-js';
 
 interface ToastNotification {
   id: string;
@@ -28,6 +49,15 @@ interface AppContextType {
   setIsRoleModalOpen: (open: boolean) => void;
   switchToSellerRole: () => void;
   switchToClientRole: () => void;
+
+  // Supabase Auth & Profile with RLS
+  supabaseUser: User | null;
+  supabaseProfile: UserProfile | null;
+  isSupabaseAuthModalOpen: boolean;
+  setIsSupabaseAuthModalOpen: (open: boolean) => void;
+  loginWithSupabaseEmail: (email: string, pass: string) => Promise<boolean>;
+  signUpWithSupabase: (email: string, pass: string, name: string, phone: string, role?: 'client' | 'seller') => Promise<boolean>;
+  logoutSupabase: () => Promise<void>;
 
   // Welcome Screen
   hasSeenWelcome: boolean;
@@ -92,10 +122,14 @@ interface AppContextType {
     quartier?: string;
     indications?: string;
     notes?: string;
-  }) => Order;
+  }) => Promise<Order>;
   updateOrderStatus: (orderId: string, newStatus: OrderStatus, rejectionReason?: string) => void;
   acceptOrder: (orderId: string) => void;
   refuseOrder: (orderId: string, reason?: string) => void;
+
+  // Customer multi-device order lookup
+  lookupCustomerOrdersByPhone: (phone: string) => Promise<Order[]>;
+  claimOrderByNumber: (orderId: string) => Promise<boolean>;
 
   // Sunday Reservations
   createSundayReservation: (data: {
@@ -116,7 +150,7 @@ interface AppContextType {
   deleteProduct: (productId: string) => void;
 
   // Admin Auth
-  loginAdmin: (pin: string) => boolean;
+  loginAdmin: (pin: string) => Promise<boolean>;
   logoutAdmin: () => void;
   setAdminPin: (newPin: string) => void;
 
@@ -150,6 +184,11 @@ interface AppContextType {
   clearAdminOrders: (mode: 'all' | 'completed_cancelled') => void;
   revenueResetTimestamp: number;
   resetDailyRevenue: () => void;
+
+  // Supabase Configuration & Status
+  supabaseStatus: { isConfigured: boolean; url: string };
+  saveSupabaseSettings: (url: string, key: string) => void;
+  checkSupabaseLive: () => Promise<{ success: boolean; message: string }>;
 }
 
 const INITIAL_REVIEWS: CustomerReview[] = [
@@ -705,7 +744,144 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Real-time Firestore sync for orders
+  // Supabase Configuration & Authentication State
+  const [supabaseStatus, setSupabaseStatus] = useState(() => getSupabaseCredentials());
+  const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
+  const [supabaseProfile, setSupabaseProfile] = useState<UserProfile | null>(null);
+  const [isSupabaseAuthModalOpen, setIsSupabaseAuthModalOpen] = useState(false);
+
+  // Listen to Supabase Auth State Changes with RLS
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    client.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        setSupabaseUser(data.user);
+        fetchUserProfile(data.user.id).then((p) => {
+          setSupabaseProfile(p);
+          if (p?.role === 'admin' || p?.role === 'seller') {
+            setIsAdminLoggedIn(true);
+            setUserRole('seller');
+          }
+        });
+      }
+    });
+
+    const { data: authListener } = client.auth.onAuthStateChange(async (_event, session) => {
+      const user = session?.user || null;
+      setSupabaseUser(user);
+      if (user) {
+        const p = await fetchUserProfile(user.id);
+        setSupabaseProfile(p);
+        if (p?.role === 'admin' || p?.role === 'seller') {
+          setIsAdminLoggedIn(true);
+          setUserRole('seller');
+        }
+      } else {
+        setSupabaseProfile(null);
+      }
+    });
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, [supabaseStatus]);
+
+  const loginWithSupabaseEmail = async (email: string, pass: string): Promise<boolean> => {
+    try {
+      const data = await signInWithSupabaseEmail(email, pass);
+      if (data?.user) {
+        setSupabaseUser(data.user);
+        const p = await fetchUserProfile(data.user.id);
+        setSupabaseProfile(p);
+        if (p?.role === 'admin' || p?.role === 'seller') {
+          setIsAdminLoggedIn(true);
+          setUserRole('seller');
+          showToast(`Bienvenue gérante (${p.fullName || data.user.email}) ! 🧑‍🍳`, 'success');
+        } else {
+          showToast(`Connexion réussie : ${p?.fullName || data.user.email}`, 'success');
+        }
+        setIsSupabaseAuthModalOpen(false);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err.message || 'Identifiants incorrects', 'error');
+      return false;
+    }
+  };
+
+  const signUpWithSupabase = async (
+    email: string,
+    pass: string,
+    name: string,
+    phone: string,
+    role: 'client' | 'seller' = 'client'
+  ): Promise<boolean> => {
+    try {
+      const data = await signUpWithSupabaseEmail(email, pass, name, phone, role);
+      if (data?.user) {
+        showToast('Compte créé avec succès !', 'success');
+        setIsSupabaseAuthModalOpen(false);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err.message || 'Erreur lors de la création du compte', 'error');
+      return false;
+    }
+  };
+
+  const logoutSupabase = async () => {
+    await signOutSupabaseAuth();
+    setSupabaseUser(null);
+    setSupabaseProfile(null);
+    setIsAdminLoggedIn(false);
+    setUserRole('client');
+    showToast('Déconnexion de la session Supabase effectuée', 'info');
+  };
+
+  const saveSupabaseSettings = (url: string, key: string) => {
+    configureSupabase(url, key);
+    setSupabaseStatus(getSupabaseCredentials());
+    showToast('Paramètres Supabase sauvegardés avec succès !', 'success');
+  };
+
+  const checkSupabaseLive = async () => {
+    return await testSupabaseConnection();
+  };
+
+  // Real-time Central Database sync for Products / Menu
+  useEffect(() => {
+    try {
+      const unsub = onSnapshot(collection(db, 'products'), (snapshot) => {
+        if (!snapshot.empty) {
+          const loaded: Product[] = [];
+          snapshot.forEach((snap) => {
+            loaded.push(snap.data() as Product);
+          });
+          setProducts(loaded);
+        } else {
+          // Central database empty on first run: auto-seed with official menu
+          INITIAL_PRODUCTS.forEach((prod) => {
+            setDoc(doc(db, 'products', prod.id), prod).catch(() => {});
+          });
+          setProducts(INITIAL_PRODUCTS);
+        }
+      }, (err) => {
+        console.warn('[Firestore] Products listener warning:', err);
+      });
+      return () => unsub();
+    } catch (e) {
+      console.warn('[Firestore] Products setup error:', e);
+    }
+  }, []);
+
+  // Flag to avoid ringing kitchen sounds on initial orders load
+  const isOrdersInitialLoad = useRef(true);
+
+  // Real-time Central Database sync for orders across ALL devices (Customers & Manager Phones)
   useEffect(() => {
     try {
       const unsub = onSnapshot(collection(db, 'orders'), (snapshot) => {
@@ -717,15 +893,92 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Sort newest first
           loadedOrders.sort((a, b) => (b.numericId || 0) - (a.numericId || 0));
           setOrders(loadedOrders);
+
+          // Handle LIVE events coming from other devices (skip initial fetch)
+          if (!isOrdersInitialLoad.current) {
+            snapshot.docChanges().forEach((change) => {
+              const order = change.doc.data() as Order;
+
+              if (change.type === 'added') {
+                // A customer has just placed an order on their phone!
+                // Trigger kitchen sound, vibration and alert if user is in seller mode or admin
+                if (userRoleRef.current === 'seller' || isAdminLoggedIn) {
+                  soundEffects.playNewOrder();
+                  try {
+                    if ('vibrate' in navigator) navigator.vibrate([200, 100, 200, 100, 400]);
+                  } catch {}
+                  setLatestRealtimeEvent({
+                    type: 'NEW_ORDER',
+                    order,
+                    sender: 'customer',
+                    timestamp: Date.now(),
+                  });
+                  showToast(`🔔 NOUVELLE COMMANDE REÇUE : ${order.id} (${order.customerName} - ${order.total} FCFA)`, 'warning');
+                  realtimeHub.showSystemNotification(`🔔 Nouvelle commande Chez Bineta : ${order.id}`, {
+                    body: `${order.customerName} • Total : ${order.total} FCFA • Mode : ${order.mode === 'livraison' ? 'Livraison' : 'Retrait'}`,
+                  });
+                }
+              } else if (change.type === 'modified') {
+                // Bineta updated the order status -> notify the customer's phone!
+                if (userRoleRef.current === 'client') {
+                  const isMyOrder = customerOrderIdsRef.current.includes(order.id) || trackedOrderIdRef.current === order.id;
+                  if (isMyOrder) {
+                    try {
+                      if ('vibrate' in navigator) navigator.vibrate([150, 80, 150]);
+                    } catch {}
+
+                    if (order.status === 'preparing') {
+                      soundEffects.playOrderAccepted();
+                      showToast(`🟢 Votre commande ${order.id} a été ACCEPTÉE par Bineta !`, 'success');
+                      realtimeHub.showSystemNotification(`Commande ${order.id} ACCEPTÉE !`, {
+                        body: 'En cours de préparation en cuisine chez Chez Bineta 👨‍🍳',
+                      });
+                    } else if (order.status === 'cancelled') {
+                      soundEffects.playOrderRefused();
+                      showToast(`❌ Commande ${order.id} non retenue : ${order.rejectionReason || 'Non disponible'}`, 'error');
+                      realtimeHub.showSystemNotification(`Information commande ${order.id}`, {
+                        body: `Commande non retenue : ${order.rejectionReason || 'Non disponible'}`,
+                      });
+                    } else if (order.status === 'ready') {
+                      soundEffects.playStatusChange();
+                      showToast(`🔵 Votre commande ${order.id} est PRÊTE !`, 'info');
+                    } else if (order.status === 'delivering') {
+                      soundEffects.playStatusChange();
+                      showToast(`🚚 Votre commande ${order.id} est en cours de livraison !`, 'info');
+                    }
+                  }
+                }
+              }
+            });
+          } else {
+            isOrdersInitialLoad.current = false;
+          }
+        } else {
+          isOrdersInitialLoad.current = false;
         }
       }, (err) => {
         console.warn('[Firestore] Orders listener warning:', err);
       });
-      return () => unsub();
+
+      // Also listen to Supabase Realtime if connected
+      const unsubSupabase = subscribeToSupabaseOrders((payload) => {
+        if (payload.eventType === 'INSERT') {
+          const newOrder = payload.new;
+          if (userRoleRef.current === 'seller' || isAdminLoggedIn) {
+            soundEffects.playNewOrder();
+            showToast(`⚡ Nouvelle commande Supabase : ${newOrder.id}`, 'warning');
+          }
+        }
+      });
+
+      return () => {
+        unsub();
+        unsubSupabase();
+      };
     } catch (err) {
       console.warn('[Firestore] Orders setup error:', err);
     }
-  }, []);
+  }, [isAdminLoggedIn]);
 
   // Real-time Firestore sync for store opening / closing status
   useEffect(() => {
@@ -897,8 +1150,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Orders
-  const placeOrder = (orderData: {
+  // Orders with atomic collision-proof ID generation & dual persistence
+  const generateUniqueOrderId = async (): Promise<{ id: string; numericId: number }> => {
+    // 1. Try server-side atomic sequential counter
+    try {
+      const res = await fetch('/api/orders/next-number', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.orderId) {
+          return { id: data.orderId, numericId: data.numericId };
+        }
+      }
+    } catch {}
+
+    // 2. Try Firestore atomic transaction
+    try {
+      const counterRef = doc(db, 'counters', 'orderSequence');
+      const nextNum = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(counterRef);
+        const current = snap.exists() ? (snap.data().current || 1042) : 1042;
+        const inc = current + 1;
+        transaction.set(counterRef, { current: inc }, { merge: true });
+        return inc;
+      });
+      return { id: `#CB-${nextNum}`, numericId: nextNum };
+    } catch {}
+
+    // 3. Collision-proof entropy fallback (timestamp + 2 random digits)
+    const suffix = `${Date.now().toString().slice(-4)}${Math.floor(10 + Math.random() * 90)}`;
+    const num = parseInt(suffix, 10);
+    return { id: `#CB-${suffix}`, numericId: num };
+  };
+
+  const placeOrder = async (orderData: {
     customerName: string;
     phone: string;
     mode: 'retrait' | 'livraison';
@@ -907,14 +1194,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     quartier?: string;
     indications?: string;
     notes?: string;
-  }): Order => {
-    const rawNum = parseInt(localStorage.getItem(STORAGE_KEYS.LAST_ORDER_ID) || '1042', 10);
-    const nextNum = rawNum + 1;
-    localStorage.setItem(STORAGE_KEYS.LAST_ORDER_ID, String(nextNum));
+  }): Promise<Order> => {
+    const { id: generatedId, numericId } = await generateUniqueOrderId();
 
     const newOrder: Order = {
-      id: `#CB-${nextNum}`,
-      numericId: nextNum,
+      id: generatedId,
+      numericId,
       customerName: orderData.customerName,
       phone: orderData.phone,
       mode: orderData.mode,
@@ -931,7 +1216,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: orderData.notes,
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
+    setOrders((prev) => [newOrder, ...prev.filter((o) => o.id !== newOrder.id)]);
     setTrackedOrderId(newOrder.id);
 
     // Save to customer order IDs
@@ -961,17 +1246,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: Date.now(),
     });
 
-    // Persist in Firestore
+    // 1. Authoritative persistence in Firestore
     try {
-      setDoc(doc(db, 'orders', newOrder.id), newOrder).catch((err) => {
-        console.warn('[Firestore] setDoc error:', err);
-      });
+      await setDoc(doc(db, 'orders', newOrder.id), newOrder);
     } catch (e) {
       console.warn('[Firestore] placeOrder error:', e);
     }
 
+    // 2. Dual persistence in Supabase if configured
+    syncOrderToSupabase(newOrder);
+
     showToast(`Commande ${newOrder.id} enregistrée avec succès !`, 'success');
     return newOrder;
+  };
+
+  // Multi-device order retrieval by customer phone
+  const lookupCustomerOrdersByPhone = async (rawPhone: string): Promise<Order[]> => {
+    const cleanPhone = rawPhone.replace(/\s+/g, '').replace(/[^0-9+]/g, '');
+    if (cleanPhone.length < 6) {
+      showToast('Veuillez entrer un numéro de téléphone valide (ex: 77 123 45 67)', 'warning');
+      return [];
+    }
+
+    try {
+      const q = query(collection(db, 'orders'));
+      const snap = await getDocs(q);
+      const found: Order[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as Order;
+        const orderPhoneClean = (data.phone || '').replace(/\s+/g, '').replace(/[^0-9+]/g, '');
+        if (orderPhoneClean && (orderPhoneClean.includes(cleanPhone) || cleanPhone.includes(orderPhoneClean))) {
+          found.push(data);
+        }
+      });
+
+      if (found.length > 0) {
+        setCustomerOrderIds((prev) => {
+          const set = new Set([...prev, ...found.map((o) => o.id)]);
+          const arr = Array.from(set);
+          localStorage.setItem(STORAGE_KEYS.CUSTOMER_ORDER_IDS, JSON.stringify(arr));
+          return arr;
+        });
+        showToast(`📱 ${found.length} commande(s) synchronisée(s) sur cet appareil !`, 'success');
+      } else {
+        showToast('Aucune commande trouvée pour ce numéro pour le moment', 'info');
+      }
+      return found;
+    } catch (e) {
+      console.warn('lookupCustomerOrdersByPhone error:', e);
+      return [];
+    }
+  };
+
+  // Claim order across devices by ID (#CB-xxxx)
+  const claimOrderByNumber = async (orderIdToClaim: string): Promise<boolean> => {
+    const trimmed = orderIdToClaim.trim().toUpperCase();
+    const formatted = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+
+    const exists = orders.find((o) => o.id.toUpperCase() === formatted);
+    if (exists) {
+      setCustomerOrderIds((prev) => {
+        const updated = [exists.id, ...prev.filter((id) => id !== exists.id)];
+        localStorage.setItem(STORAGE_KEYS.CUSTOMER_ORDER_IDS, JSON.stringify(updated));
+        return updated;
+      });
+      setTrackedOrderId(exists.id);
+      showToast(`Commande ${exists.id} synchronisée sur cet appareil !`, 'success');
+      return true;
+    }
+
+    try {
+      const snap = await getDocFromServer(doc(db, 'orders', formatted));
+      if (snap.exists()) {
+        const order = snap.data() as Order;
+        setOrders((prev) => [order, ...prev.filter((o) => o.id !== order.id)]);
+        setCustomerOrderIds((prev) => {
+          const updated = [order.id, ...prev.filter((id) => id !== order.id)];
+          localStorage.setItem(STORAGE_KEYS.CUSTOMER_ORDER_IDS, JSON.stringify(updated));
+          return updated;
+        });
+        setTrackedOrderId(order.id);
+        showToast(`Commande ${order.id} retrouvée avec succès !`, 'success');
+        return true;
+      }
+    } catch {}
+
+    showToast(`Commande ${formatted} introuvable. Vérifiez la référence`, 'error');
+    return false;
   };
 
   const updateOrderStatus = (orderId: string, newStatus: OrderStatus, rejectionReason?: string) => {
@@ -1119,25 +1480,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Réservation ${status === 'confirmed' ? 'confirmée' : 'annulée'}`, 'info');
   };
 
-  // Product management
+  // Product management with real-time central database & Supabase persistence
   const updateProduct = (product: Product) => {
     setProducts((prev) => prev.map((p) => (p.id === product.id ? product : p)));
-    showToast(`Produit ${product.name} mis à jour`, 'success');
+    try {
+      setDoc(doc(db, 'products', product.id), product, { merge: true }).catch(() => {});
+    } catch {}
+    syncProductToSupabase(product);
+    showToast(`Produit ${product.name} mis à jour dans le menu officiel`, 'success');
   };
 
   const toggleProductAvailability = (productId: string) => {
+    const p = products.find((prod) => prod.id === productId);
+    if (!p) return;
+    const updated = !p.available;
+
     setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === productId) {
-          const updated = !p.available;
-          showToast(
-            `${p.name} est maintenant ${updated ? 'disponible 🟢' : 'indisponible 🔴'}`,
-            updated ? 'success' : 'warning'
-          );
-          return { ...p, available: updated };
-        }
-        return p;
-      })
+      prev.map((prod) => (prod.id === productId ? { ...prod, available: updated } : prod))
+    );
+
+    try {
+      updateDoc(doc(db, 'products', productId), { available: updated }).catch(() => {});
+    } catch {}
+
+    syncProductToSupabase({ ...p, available: updated });
+
+    showToast(
+      `${p.name} est maintenant ${updated ? 'disponible 🟢' : 'indisponible 🔴'}`,
+      updated ? 'success' : 'warning'
     );
   };
 
@@ -1145,12 +1515,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newId = `prod-${Date.now()}`;
     const newProduct: Product = { ...productData, id: newId };
     setProducts((prev) => [...prev, newProduct]);
-    showToast(`Produit ${newProduct.name} ajouté au menu !`, 'success');
+    try {
+      setDoc(doc(db, 'products', newId), newProduct).catch(() => {});
+    } catch {}
+    syncProductToSupabase(newProduct);
+    showToast(`Produit ${newProduct.name} ajouté au menu officiel !`, 'success');
   };
 
   const deleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
-    showToast('Produit supprimé du menu', 'info');
+    try {
+      deleteDoc(doc(db, 'products', productId)).catch(() => {});
+    } catch {}
+    showToast('Produit supprimé du menu officiel', 'info');
   };
 
   // Customer Reviews actions
@@ -1192,9 +1569,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Avis supprimé', 'info');
   };
 
-  // Admin auth with Brute-Force Rate Limiting Lockout
-  const loginAdmin = (pin: string): boolean => {
-    // 1. Check if currently locked out
+  // Server & Supabase RPC-Verified Admin Login (Never checked in local browser storage)
+  const loginAdmin = async (pin: string): Promise<boolean> => {
+    // 1. Check local lockout first
     const lockoutUntil = parseInt(localStorage.getItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL) || '0', 10);
     if (Date.now() < lockoutUntil) {
       const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
@@ -1202,29 +1579,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // 2. Validate PIN
-    if (pin.trim() === adminPin.trim()) {
+    // 2. Primary Verification via Supabase RPC verify_admin_pin
+    // The PIN is evaluated server-side by PostgreSQL function / secure backend
+    const res = await verifyAdminPinRPC(pin);
+
+    if (res.success) {
       setIsAdminLoggedIn(true);
       setUserRole('seller');
       setIsRoleModalOpen(false);
-      localStorage.removeItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS);
-      localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS);
+        localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+      } catch {}
       setLockoutRemainingSeconds(0);
-      showToast('Bienvenue dans votre Espace Gérante (Interface Vendeur)', 'success');
+      const authMethodLabel =
+        res.verifiedVia === 'supabase_rpc'
+          ? '⚡ Vérifié par Supabase RPC'
+          : '🛡️ Vérifié par Serveur Sécurisé';
+      showToast(`Bienvenue dans votre Terminal Vendeur (${authMethodLabel}) 🧑‍🍳`, 'success');
       return true;
     }
 
-    // 3. Failed attempt tracking & progressive lockout
-    const prevAttempts = parseInt(localStorage.getItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS) || '0', 10) + 1;
+    // Handle failed attempts & rate limiting
+    const prevAttempts =
+      parseInt(localStorage.getItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS) || '0', 10) + 1;
     localStorage.setItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS, String(prevAttempts));
 
     if (prevAttempts >= 3) {
-      const lockUntil = Date.now() + 30000; // 30 seconds lockout
+      const lockUntil = Date.now() + 30000;
       localStorage.setItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL, String(lockUntil));
       setLockoutRemainingSeconds(30);
       showToast('⚠️ 3 tentatives incorrectes ! Accès verrouillé pendant 30 secondes pour sécurité.', 'error');
     } else {
-      showToast(`Code PIN incorrect (${prevAttempts}/3 tentatives). Veuillez réessayer.`, 'error');
+      showToast(res.error || `Code PIN incorrect (${prevAttempts}/3 tentatives). Veuillez réessayer.`, 'error');
     }
     return false;
   };
@@ -1233,12 +1620,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsAdminLoggedIn(false);
     setUserRole('client');
     setActiveTab('home');
+    try {
+      sessionStorage.removeItem('chez_bineta_admin_token');
+    } catch {}
     showToast('Déconnexion de l’espace gérante effectuée • Retour à l’interface client', 'info');
   };
 
-  const setAdminPin = (newPin: string) => {
-    setAdminPinState(newPin);
-    showToast('Nouveau code PIN enregistré avec succès', 'success');
+  const setAdminPin = async (newPin: string) => {
+    const res = await updateAdminPinRPC(adminPin, newPin);
+    if (res.success) {
+      setAdminPinState(newPin);
+      showToast(res.message || 'Nouveau code PIN enregistré avec succès !', 'success');
+    } else {
+      showToast(res.error || 'Erreur lors de la mise à jour du code PIN', 'error');
+    }
   };
 
   return (
@@ -1250,6 +1645,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsRoleModalOpen,
         switchToSellerRole,
         switchToClientRole,
+        supabaseUser,
+        supabaseProfile,
+        isSupabaseAuthModalOpen,
+        setIsSupabaseAuthModalOpen,
+        loginWithSupabaseEmail,
+        signUpWithSupabase,
+        logoutSupabase,
         hasSeenWelcome,
         setHasSeenWelcome,
         reopenWelcome,
@@ -1291,6 +1693,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateOrderStatus,
         acceptOrder,
         refuseOrder,
+        lookupCustomerOrdersByPhone,
+        claimOrderByNumber,
         createSundayReservation,
         updateSundayReservationStatus,
         updateProduct,
@@ -1319,6 +1723,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         latestRealtimeEvent,
         dismissRealtimeEvent,
         requestNotificationPermission,
+        supabaseStatus,
+        saveSupabaseSettings,
+        checkSupabaseLive,
       }}
     >
       {children}

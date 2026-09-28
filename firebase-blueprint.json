@@ -44,7 +44,7 @@
         },
         "items": {
           "type": "string",
-          "description": "JSON serialized items or array description"
+          "description": "Items list array"
         },
         "total": {
           "type": "number",
@@ -74,6 +74,46 @@
         }
       },
       "required": ["id", "customerName", "phone", "mode", "total", "status", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Food menu item offered by Chez Bineta",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product slug / ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Product display title"
+        },
+        "price": {
+          "type": "number",
+          "description": "Price in FCFA"
+        },
+        "description": {
+          "type": "string",
+          "description": "Product description and ingredients"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category slug"
+        },
+        "available": {
+          "type": "boolean",
+          "description": "In stock status"
+        },
+        "image": {
+          "type": "string",
+          "description": "Image asset path"
+        },
+        "isPopular": {
+          "type": "boolean",
+          "description": "Featured dish"
+        }
+      },
+      "required": ["id", "name", "price", "category", "available"]
     },
     "StoreConfig": {
       "title": "StoreConfig",
@@ -175,7 +215,7 @@
           "description": "ISO timestamp of the review"
         },
         "verifiedBuyer": {
-          "type": "string",
+          "type": "boolean",
           "description": "Verified client flag"
         }
       },
@@ -186,6 +226,10 @@
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Live and historical food orders placed by customers and managed by the seller"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Central menu catalogue with persistent availability and prices"
     },
     "/storeStatus/{docId}": {
       "schema": "StoreConfig",

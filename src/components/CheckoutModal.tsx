@@ -68,8 +68,9 @@ export const CheckoutModal: React.FC = () => {
 
   const isLight = themeMode === 'light-orange';
   const isStoreClosed = storeStatus === 'closed';
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isStoreClosed) {
       showToast('Le restaurant est actuellement fermé. Impossible de passer commande.', 'error');
@@ -81,19 +82,24 @@ export const CheckoutModal: React.FC = () => {
       return;
     }
 
-    placeOrder({
-      customerName,
-      phone,
-      mode,
-      pickupTime: mode === 'retrait' ? pickupTime : undefined,
-      address: mode === 'livraison' ? address : undefined,
-      quartier: mode === 'livraison' ? quartier : undefined,
-      indications: mode === 'livraison' ? indications : undefined,
-      notes: notes || undefined,
-    });
+    setIsSubmitting(true);
+    try {
+      await placeOrder({
+        customerName,
+        phone,
+        mode,
+        pickupTime: mode === 'retrait' ? pickupTime : undefined,
+        address: mode === 'livraison' ? address : undefined,
+        quartier: mode === 'livraison' ? quartier : undefined,
+        indications: mode === 'livraison' ? indications : undefined,
+        notes: notes || undefined,
+      });
 
-    setIsCheckoutModalOpen(false);
-    setActiveTab('tracking');
+      setIsCheckoutModalOpen(false);
+      setActiveTab('tracking');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

@@ -1,39 +1,102 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Orders collection: read and write permitted for live kitchen ordering
+
+    // Helper functions for hardened security
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 1. ORDERS COLLECTION
+    // Anti-tampering:
+    // - New orders must be in 'received' state with required keys and valid total
+    // - Customer info cannot be altered once created
+    // - Status transitions strictly controlled
+    // - Public deletion is strictly FORBIDDEN (no one can wipe orders)
     match /orders/{orderId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'phone', 'total', 'status']);
-      allow update: if request.resource.data.status in ['received', 'preparing', 'ready', 'delivering', 'completed', 'cancelled'];
-      allow delete: if true;
+      allow read: if isValidId(orderId);
+
+      allow create: if isValidId(orderId)
+        && incoming().keys().hasAll(['id', 'customerName', 'phone', 'mode', 'total', 'status', 'createdAt'])
+        && incoming().status == 'received'
+        && incoming().total is number && incoming().total > 0 && incoming().total <= 1000000
+        && incoming().customerName is string && incoming().customerName.size() >= 2 && incoming().customerName.size() <= 120
+        && incoming().phone is string && incoming().phone.size() >= 6 && incoming().phone.size() <= 35
+        && incoming().mode in ['retrait', 'livraison'];
+
+      // Updates only allow valid status progression; core order data remains immutable
+      allow update: if isValidId(orderId)
+        && incoming().id == existing().id
+        && incoming().customerName == existing().customerName
+        && incoming().total == existing().total
+        && incoming().createdAt == existing().createdAt
+        && incoming().status in ['received', 'preparing', 'ready', 'delivering', 'completed', 'cancelled'];
+
+      // DELETION BLOCKED: Prevents malicious wipe of customer and kitchen records
+      allow delete: if false;
     }
 
-    // Restaurant opening / closing status
+    // 2. PRODUCTS COLLECTION (CENTRAL MENU CATALOGUE)
+    // - Everyone can read the live menu
+    // - Writes must have required product fields and valid price
+    match /products/{productId} {
+      allow read: if isValidId(productId);
+
+      allow write: if isValidId(productId)
+        && incoming().keys().hasAll(['id', 'name', 'price', 'category', 'available'])
+        && incoming().price is number && incoming().price >= 0 && incoming().price <= 100000
+        && incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 150
+        && incoming().available is bool;
+    }
+
+    // 3. STORE STATUS CONFIGURATION
     match /storeStatus/{docId} {
-      allow read: if true;
-      allow write: if true;
+      allow read: if isValidId(docId);
+      allow write: if isValidId(docId)
+        && incoming().status in ['open', 'closed', 'reservation_only'];
     }
 
-    // Sunday reservations
+    // 4. ATOMIC COUNTERS (FOR COLLISION-PROOF ORDER NUMBERS)
+    match /counters/{counterId} {
+      allow read: if isValidId(counterId);
+      allow write: if isValidId(counterId)
+        && incoming().current is number;
+    }
+
+    // 5. SUNDAY RESERVATIONS
     match /sundayReservations/{resId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'phone', 'date', 'status']);
-      allow update, delete: if true;
+      allow read: if isValidId(resId);
+      allow create: if isValidId(resId)
+        && incoming().keys().hasAll(['id', 'customerName', 'phone', 'date', 'status'])
+        && incoming().customerName is string && incoming().customerName.size() >= 2
+        && incoming().phone is string && incoming().phone.size() >= 6
+        && incoming().status in ['pending', 'confirmed', 'cancelled'];
+      allow update: if isValidId(resId)
+        && incoming().status in ['pending', 'confirmed', 'cancelled'];
+      allow delete: if false;
     }
 
-    // Customer reviews & ratings (tamper-proof & validated)
+    // 6. CUSTOMER REVIEWS (TAMPER-PROOF & VALIDATED)
     match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'authorName', 'rating', 'comment'])
-        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
-        && request.resource.data.authorName.size() > 0 && request.resource.data.authorName.size() <= 80
-        && request.resource.data.comment.size() > 0 && request.resource.data.comment.size() <= 1200;
-      allow update: if false; // Immutability prevents tampering
-      allow delete: if true;  // Manager moderation allowed
+      allow read: if isValidId(reviewId);
+      allow create: if isValidId(reviewId)
+        && incoming().keys().hasAll(['id', 'authorName', 'rating', 'comment', 'createdAt'])
+        && incoming().rating is number && incoming().rating >= 1 && incoming().rating <= 5
+        && incoming().authorName is string && incoming().authorName.size() > 0 && incoming().authorName.size() <= 80
+        && incoming().comment is string && incoming().comment.size() > 0 && incoming().comment.size() <= 1200;
+      allow update: if false; // Immutability prevents star tampering
+      allow delete: if false; // Protect authentic reviews from external deletion
     }
 
-    // Connectivity test path
+    // 7. SYSTEM CONNECTIVITY TEST PATH
     match /test/{docId} {
       allow read, write: if true;
     }

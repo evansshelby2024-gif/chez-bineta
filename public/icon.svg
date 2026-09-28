@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#grad)"/>
+  <circle cx="256" cy="256" r="190" fill="#ffffff" opacity="0.15"/>
+  <text x="50%" y="45%" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="900" font-size="140" fill="#ffffff" dy=".3em">CB</text>
+  <text x="50%" y="74%" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="800" font-size="44" fill="#ffffff" letter-spacing="4">CHEZ BINETA</text>
+  <text x="50%" y="86%" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="700" font-size="28" fill="#fef08a" letter-spacing="2">SAINT-LOUIS</text>
+</svg>

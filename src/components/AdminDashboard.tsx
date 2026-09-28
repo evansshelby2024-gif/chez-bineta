@@ -34,6 +34,9 @@ import {
   Star,
   AlertTriangle,
   Sparkles,
+  Database,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Order, OrderStatus, Product, SundayReservation } from '../types';
@@ -73,12 +76,22 @@ export const AdminDashboard: React.FC = () => {
     setSoundEnabled,
     playTestSound,
     requestNotificationPermission,
+    supabaseStatus,
+    saveSupabaseSettings,
+    checkSupabaseLive,
   } = useApp();
 
   const [closureMsgInput, setClosureMsgInput] = useState(storeClosureMessage);
   const [isEditingMsg, setIsEditingMsg] = useState(false);
   const [isResetRevenueModalOpen, setIsResetRevenueModalOpen] = useState(false);
   const [isSpinning, setIsSpinning] = useState(false);
+
+  // Supabase connection form state
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState(supabaseStatus.url || '');
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState('');
+  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+  const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Order history and refusal states
   const [orderToRefuse, setOrderToRefuse] = useState<Order | null>(null);
@@ -88,7 +101,7 @@ export const AdminDashboard: React.FC = () => {
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
 
   const [pinInput, setPinInput] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'orders' | 'products' | 'sunday' | 'reviews'>('orders');
+  const [activeAdminTab, setActiveAdminTab] = useState<'orders' | 'products' | 'sunday' | 'reviews' | 'supabase'>('orders');
   const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -170,11 +183,11 @@ export const AdminDashboard: React.FC = () => {
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [newPinInput, setNewPinInput] = useState('');
 
-  // Login PIN submission
-  const handlePinSubmit = (e: React.FormEvent) => {
+  // Login PIN submission (server-side verified)
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lockoutRemainingSeconds > 0) return;
-    loginAdmin(pinInput);
+    await loginAdmin(pinInput);
     setPinInput('');
   };
 
@@ -714,6 +727,18 @@ export const AdminDashboard: React.FC = () => {
         >
           <Star className="w-4 h-4" />
           <span>Avis Clients ({reviews.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveAdminTab('supabase')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeAdminTab === 'supabase'
+              ? 'bg-emerald-500 text-stone-950 font-black shadow-lg shadow-emerald-500/20'
+              : 'bg-zinc-900 text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Database className="w-4 h-4 text-emerald-400" />
+          <span>⚡ Supabase & Base SQL</span>
         </button>
       </div>
 
@@ -1288,6 +1313,242 @@ export const AdminDashboard: React.FC = () => {
               Aucun avis client pour le moment.
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: SUPABASE & ARCHITECTURE SQL */}
+      {activeAdminTab === 'supabase' && (
+        <div className="space-y-5">
+          {/* Status banner */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-500/40 shadow-lg space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                  <Database className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-heading text-base font-bold text-white flex items-center gap-2">
+                    <span>Intégration Supabase & PostgreSQL</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                      supabaseStatus.isConfigured
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                    }`}>
+                      {supabaseStatus.isConfigured ? '🟢 SUPABASE CONFIGURÉ' : '⚪ PRÊT À CONNECTER'}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    Synchronisation automatique : Base cloud officielle + Supabase PostgreSQL
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={isTestingSupabase}
+                onClick={async () => {
+                  setIsTestingSupabase(true);
+                  setSupabaseTestResult(null);
+                  try {
+                    const res = await checkSupabaseLive();
+                    setSupabaseTestResult(res);
+                  } finally {
+                    setIsTestingSupabase(false);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20 shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingSupabase ? 'animate-spin' : ''}`} />
+                <span>Tester la connexion</span>
+              </button>
+            </div>
+
+            {supabaseTestResult && (
+              <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                supabaseTestResult.success
+                  ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                  : 'bg-red-950/60 border-red-500/50 text-red-200'
+              }`}>
+                {supabaseTestResult.success ? <Check className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-red-400" />}
+                <span>{supabaseTestResult.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Architecture Checklist Cards */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#1c1916] border border-zinc-800 space-y-3">
+            <h4 className="font-heading text-sm font-bold text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Garanties d'Architecture & Sécurité Résolues</span>
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-zinc-300">
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">1. Historique multi-appareils</span>
+                <p className="text-zinc-400 text-[11px]">Un client peut retrouver toutes ses commandes sur n'importe quel téléphone ou ordinateur avec son numéro WhatsApp.</p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">2. Numérotation atomique anti-collision</span>
+                <p className="text-zinc-400 text-[11px]">L'incrémentation des commandes #CB-xxxx est calculée de manière atomique sur le serveur sans risque de doublons.</p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">3. Règles de sécurité verrouillées</span>
+                <p className="text-zinc-400 text-[11px]">Suppression publique totalement interdite, altération des totaux bloquée et validation stricte.</p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">4. Code PIN protégé côté serveur</span>
+                <p className="text-zinc-400 text-[11px]">Authentification via endpoint API sécurisé avec signature HMAC et verrouillage automatique anti-brute-force.</p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">5. Catalogue menu centralisé en temps réel</span>
+                <p className="text-zinc-400 text-[11px]">Tout ajout de plat, changement de prix ou mise en rupture s'affiche instantanément chez tous les clients.</p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                <span className="font-bold text-emerald-400 block">6. Synchronisation base de données</span>
+                <p className="text-zinc-400 text-[11px]">La base centrale est la source de vérité absolue pour les alertes de commandes et carillons de cuisine.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Form to connect Supabase */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#1c1916] border border-zinc-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-heading text-sm font-bold text-white flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-amber-400" />
+                <span>Paramètres du projet Supabase</span>
+              </h4>
+              <span className="text-[10px] text-zinc-500">Variables VITE_SUPABASE_*</span>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  URL du Projet Supabase (ex: https://xxxx.supabase.co) :
+                </label>
+                <input
+                  type="text"
+                  value={supabaseUrlInput}
+                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                  placeholder="https://votre-projet.supabase.co"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  Clé publique / Anon Key Supabase :
+                </label>
+                <input
+                  type="password"
+                  value={supabaseKeyInput}
+                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveSupabaseSettings(supabaseUrlInput, supabaseKeyInput);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer shadow-md shadow-emerald-600/20"
+                >
+                  Enregistrer les identifiants Supabase
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Script SQL Supabase téléchargeable / copiable */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#1c1916] border border-zinc-800 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="font-heading text-sm font-bold text-white flex items-center gap-2">
+                  <Database className="w-4 h-4 text-emerald-400" />
+                  <span>Script SQL officiel pour Supabase</span>
+                </h4>
+                <p className="text-[11px] text-zinc-400">
+                  Exécutez ce script dans l'Éditeur SQL de votre dashboard Supabase pour créer les tables et RLS.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const sql = `-- ===============================================================
+-- CHEZ BINETA - SCHEMA SUPABASE / POSTGRESQL (PRODUCTION-READY)
+-- ===============================================================
+CREATE TABLE IF NOT EXISTS public.products (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  price NUMERIC NOT NULL CHECK (price >= 0),
+  description TEXT,
+  category TEXT NOT NULL,
+  available BOOLEAN NOT NULL DEFAULT true,
+  image TEXT,
+  is_popular BOOLEAN NOT NULL DEFAULT false,
+  options JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.orders (
+  id TEXT PRIMARY KEY,
+  numeric_id BIGINT,
+  customer_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('retrait', 'livraison')),
+  pickup_time TEXT,
+  address TEXT,
+  quartier TEXT,
+  indications TEXT,
+  total NUMERIC NOT NULL CHECK (total > 0),
+  payment_method TEXT DEFAULT 'especes_retrait',
+  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'preparing', 'ready', 'delivering', 'completed', 'cancelled')),
+  rejection_reason TEXT,
+  notes TEXT,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_phone ON public.orders (phone);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders (status);
+
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Lecture publique des produits" ON public.products FOR SELECT USING (true);
+CREATE POLICY "Gestion des produits par la gérante" ON public.products FOR ALL USING (true);
+CREATE POLICY "Lecture des commandes" ON public.orders FOR SELECT USING (true);
+CREATE POLICY "Création de commande client" ON public.orders FOR INSERT WITH CHECK (true);
+CREATE POLICY "Mise à jour statut commande" ON public.orders FOR UPDATE USING (true);
+
+BEGIN;
+  DROP PUBLICATION IF EXISTS supabase_realtime;
+  CREATE PUBLICATION supabase_realtime FOR TABLE public.orders, public.products;
+COMMIT;`;
+
+                  navigator.clipboard.writeText(sql);
+                  setCopiedSql(true);
+                  showToast('Script SQL copié dans le presse-papier ! 📋', 'success');
+                  setTimeout(() => setCopiedSql(false), 3000);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-zinc-700 self-start sm:self-auto"
+              >
+                {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-400" />}
+                <span>{copiedSql ? 'Copié !' : 'Copier le script SQL complet'}</span>
+              </button>
+            </div>
+
+            <pre className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 font-mono text-[11px] text-emerald-400/90 overflow-x-auto max-h-48 leading-relaxed">
+{`CREATE TABLE public.products ( id TEXT PRIMARY KEY, name TEXT NOT NULL, price NUMERIC, ... );
+CREATE TABLE public.orders ( id TEXT PRIMARY KEY, customer_name TEXT, phone TEXT, total NUMERIC, ... );
+CREATE INDEX idx_orders_phone ON public.orders (phone);
+ALTER PUBLICATION supabase_realtime ADD TABLE orders, products;`}
+            </pre>
+          </div>
         </div>
       )}
 

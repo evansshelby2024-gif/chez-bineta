@@ -50,9 +50,12 @@ export const OrderTrackingView: React.FC = () => {
     setSoundEnabled,
     playTestSound,
     requestNotificationPermission,
+    lookupCustomerOrdersByPhone,
+    claimOrderByNumber,
   } = useApp();
 
   const [searchInput, setSearchInput] = useState('');
+  const [isSearchingDb, setIsSearchingDb] = useState(false);
   const [isClearHistoryModalOpen, setIsClearHistoryModalOpen] = useState(false);
   const [isDeletingOrderId, setIsDeletingOrderId] = useState<string | null>(null);
 
@@ -74,18 +77,31 @@ export const OrderTrackingView: React.FC = () => {
     return null;
   }, [orders, trackedOrderId, customerOrderIds]);
 
-  const handleSearchOrder = (e: React.FormEvent) => {
+  const handleSearchOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchInput.trim()) return;
-    const cleanId = searchInput.trim().toUpperCase();
-    const formattedId = cleanId.startsWith('#') ? cleanId : `#${cleanId}`;
-    const found = orders.find((o) => o.id === formattedId || o.phone.includes(searchInput.trim()));
-    if (found) {
-      setTrackedOrderId(found.id);
-      setSearchInput('');
-      showToast(`Commande ${found.id} trouvée !`, 'success');
-    } else {
-      showToast(`Aucune commande trouvée pour "${searchInput.trim()}"`, 'error');
+    const query = searchInput.trim();
+    if (!query) return;
+
+    setIsSearchingDb(true);
+    try {
+      // If looks like phone number
+      const digitsOnly = query.replace(/[^0-9]/g, '');
+      if (digitsOnly.length >= 6 && !query.startsWith('#') && !query.toUpperCase().startsWith('CB-')) {
+        const found = await lookupCustomerOrdersByPhone(query);
+        if (found.length > 0) {
+          setTrackedOrderId(found[0].id);
+          setSearchInput('');
+          return;
+        }
+      }
+
+      // Try claim by Order ID
+      const claimed = await claimOrderByNumber(query);
+      if (claimed) {
+        setSearchInput('');
+      }
+    } finally {
+      setIsSearchingDb(false);
     }
   };
 

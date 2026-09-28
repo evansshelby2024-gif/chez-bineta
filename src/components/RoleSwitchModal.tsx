@@ -22,6 +22,7 @@ export const RoleSwitchModal: React.FC = () => {
     isAdminLoggedIn,
     loginAdmin,
     themeMode,
+    setIsSupabaseAuthModalOpen,
   } = useApp();
 
   const [pinInput, setPinInput] = useState('');
@@ -41,9 +42,9 @@ export const RoleSwitchModal: React.FC = () => {
     handleClose();
   };
 
-  const handleUnlockSeller = (e: React.FormEvent) => {
+  const handleUnlockSeller = async (e: React.FormEvent) => {
     e.preventDefault();
-    const success = loginAdmin(pinInput);
+    const success = await loginAdmin(pinInput);
     if (success) {
       setUserRole('seller');
       handleClose();
@@ -253,7 +254,7 @@ export const RoleSwitchModal: React.FC = () => {
                     </div>
                     <button
                       type="submit"
-                      className="py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-xs flex items-center gap-1 shadow-md shadow-emerald-600/20 cursor-pointer"
+                      className="py-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-xs flex items-center gap-1 shadow-md shadow-emerald-600/20 cursor-pointer shrink-0"
                     >
                       <Lock className="w-3.5 h-3.5" />
                       <span>Déverrouiller</span>
@@ -264,6 +265,21 @@ export const RoleSwitchModal: React.FC = () => {
                       Code PIN invalide. Le code par défaut est 1234.
                     </span>
                   )}
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[10px] text-zinc-400">
+                      ⚡ Vérification sécurisée par RPC Supabase
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleClose();
+                        setIsSupabaseAuthModalOpen(true);
+                      }}
+                      className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline font-bold"
+                    >
+                      Ou connexion par Email Supabase →
+                    </button>
+                  </div>
                 </form>
               )}
             </div>

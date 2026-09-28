@@ -1,8 +1,9 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ShoppingBag, Phone, ShieldCheck, Sun, Moon } from 'lucide-react';
+import { ShoppingBag, Phone, ShieldCheck, Sun, Moon, User as UserIcon, Database, LogOut } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { BINETA_PHONE_DISPLAY, BINETA_PHONE_CLEAN } from '../utils/formatters';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export const Header: React.FC = () => {
   const {
@@ -14,6 +15,10 @@ export const Header: React.FC = () => {
     storeStatus,
     switchToSellerRole,
     reopenWelcome,
+    supabaseUser,
+    supabaseProfile,
+    setIsSupabaseAuthModalOpen,
+    logoutSupabase,
   } = useApp();
 
   const isLight = themeMode === 'light-orange';
@@ -40,16 +45,47 @@ export const Header: React.FC = () => {
             </span>
           </div>
 
-          <button
-            onClick={switchToSellerRole}
-            className={`flex items-center gap-1 text-[11px] font-bold cursor-pointer transition-colors ${
-              isLight ? 'text-orange-700 hover:text-orange-900' : 'text-orange-400 hover:text-orange-300'
-            }`}
-            title="Accès gérante (Caisse & Cuisine)"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-orange-500" />
-            <span>Accès Gérante 🔒</span>
-          </button>
+          <div className="flex items-center gap-2.5">
+            <PWAInstallButton className="hidden sm:inline-flex" />
+
+            {supabaseUser ? (
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                <UserIcon className="w-3 h-3" />
+                <span className="truncate max-w-[120px]">
+                  {supabaseProfile?.fullName || supabaseUser.email?.split('@')[0]}
+                </span>
+                <button
+                  type="button"
+                  onClick={logoutSupabase}
+                  className="text-zinc-400 hover:text-red-500 ml-1 p-0.5"
+                  title="Déconnexion Supabase"
+                >
+                  <LogOut className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsSupabaseAuthModalOpen(true)}
+                className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-emerald-600 dark:text-zinc-400 dark:hover:text-emerald-400 cursor-pointer"
+                title="Connexion ou Inscription avec Supabase Auth"
+              >
+                <Database className="w-3 h-3 text-emerald-500" />
+                <span>Compte Supabase</span>
+              </button>
+            )}
+
+            <button
+              onClick={switchToSellerRole}
+              className={`flex items-center gap-1 text-[11px] font-bold cursor-pointer transition-colors ${
+                isLight ? 'text-orange-700 hover:text-orange-900' : 'text-orange-400 hover:text-orange-300'
+              }`}
+              title="Accès gérante (Caisse & Cuisine)"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-orange-500" />
+              <span>Accès Gérante 🔒</span>
+            </button>
+          </div>
         </div>
       </div>
 
