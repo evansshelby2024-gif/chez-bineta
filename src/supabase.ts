@@ -76,7 +76,7 @@ export const configureSupabase = (url: string, key: string) => {
 // ===============================================================
 export const verifyAdminPinRPC = async (
   inputPin: string
-): Promise<{ success: boolean; error?: string; role?: string; verifiedVia: 'supabase_rpc' | 'server_api' }> => {
+): Promise<{ success: boolean; error?: string; role?: string; verifiedVia: 'supabase_rpc' | 'server_api'; token?: string }> => {
   const client = getSupabaseClient();
 
   if (client) {
@@ -113,6 +113,7 @@ export const verifyAdminPinRPC = async (
       error: result.error,
       role: result.role || 'seller',
       verifiedVia: 'server_api',
+      token: result.token,
     };
   } catch (err: any) {
     return {
