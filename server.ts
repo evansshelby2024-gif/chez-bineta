@@ -1,28 +1,38 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const PORT = 3000;
-const supabaseServer = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
 app.use(express.json());
-app.get("/api/admin/orders", async (req: Request, res: Response) => {
-  try {
-    const token = String(req.headers.authorization || "").replace(/^Bearer /, "");
-    const [timestamp, signature] = token.split(":");
-    const expected = crypto.createHmac("sha256", SERVER_SECRET).update(`admin:${timestamp}`).digest("hex");
-    if (!timestamp || !signature || signature !== expected || Date.now() - Number(timestamp) > 24 * 60 * 60 * 1000) {
-      return res.status(401).json({ error: "Non autorisé" });
-    }
-    const { data, error } = await supabaseServer.from("orders").select("*").order("created_at", { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ data });
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message });
-  }
+
+// Server-side Supabase client with Service Role Key (bypasses RLS securely on backend)
+const getSupabaseServer = () => {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    '';
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+};
+
+const supabaseServer = new Proxy({} as any, {
+  get(_target, prop) {
+    const client = getSupabaseServer();
+    if (!client) return undefined;
+    const value = (client as any)[prop];
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
 });
 
 // Server-side State & Admin Security (Never exposed to client bundle)
@@ -38,7 +48,7 @@ let globalOrderCounter = 1042;
 const SERVER_SECRET = crypto.randomBytes(32).toString('hex');
 
 // API: Verify Admin PIN
-app.post('/api/admin/verify-pin', (req: Request, res: Response) => {
+app.post('/api/admin/verify-pin', async (req: Request, res: Response) => {
   const { pin } = req.body;
   if (!pin) {
     return res.status(400).json({ success: false, error: 'Code PIN manquant' });
@@ -54,7 +64,28 @@ app.post('/api/admin/verify-pin', (req: Request, res: Response) => {
     });
   }
 
-  if (String(pin).trim() === SERVER_ADMIN_PIN.trim()) {
+  const cleanPin = String(pin).trim();
+  let isValid = cleanPin === SERVER_ADMIN_PIN.trim();
+
+  // Also verify via Supabase RPC if configured
+  if (!isValid && supabaseServer) {
+    try {
+      const { data: rpcData, error: rpcError } = await supabaseServer.rpc('verify_admin_pin', {
+        input_pin: cleanPin,
+      });
+      if (!rpcError && rpcData) {
+        if (typeof rpcData === 'object' && rpcData.success) {
+          isValid = true;
+        } else if (typeof rpcData === 'boolean' && rpcData === true) {
+          isValid = true;
+        }
+      }
+    } catch (e) {
+      console.warn('[Server] Supabase RPC pin check error:', e);
+    }
+  }
+
+  if (isValid) {
     failedAttempts = 0;
     lockoutUntil = 0;
     // Issue secure signed HMAC session token
@@ -83,6 +114,38 @@ app.post('/api/admin/verify-pin', (req: Request, res: Response) => {
     error: `Code PIN incorrect (${failedAttempts}/3 tentatives). Veuillez réessayer.`,
     remainingAttempts: 3 - failedAttempts,
   });
+});
+
+// API: Get Admin Orders (Secure HMAC Authenticated)
+app.get('/api/admin/orders', async (req: Request, res: Response) => {
+  try {
+    const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
+    const [timestamp, signature] = token.split(':');
+    const expected = crypto
+      .createHmac('sha256', SERVER_SECRET)
+      .update(`admin:${timestamp}`)
+      .digest('hex');
+
+    if (
+      !timestamp ||
+      !signature ||
+      signature !== expected ||
+      Date.now() - Number(timestamp) > 24 * 60 * 60 * 1000
+    ) {
+      return res.status(401).json({ error: 'Non autorisé' });
+    }
+
+    const { data, error } = await supabaseServer
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ data });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // API: Change Admin PIN (requires valid session token)

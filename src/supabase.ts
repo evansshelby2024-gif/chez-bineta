@@ -2,8 +2,10 @@ import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { Product, Order, CustomerReview, SundayReservation } from './types';
 
 // Supabase environment keys or local manager storage override
-const envSupabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const envSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const envSupabaseUrl =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || '';
+const envSupabaseAnonKey =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || '';
 
 export interface UserProfile {
   id: string;
@@ -76,7 +78,7 @@ export const configureSupabase = (url: string, key: string) => {
 // ===============================================================
 export const verifyAdminPinRPC = async (
   inputPin: string
-): Promise<{ success: boolean; error?: string; role?: string; verifiedVia: 'supabase_rpc' | 'server_api'; token?: string }> => {
+): Promise<{ success: boolean; error?: string; role?: string; verifiedVia: 'supabase_rpc' | 'server_api' }> => {
   const client = getSupabaseClient();
 
   if (client) {
@@ -113,7 +115,6 @@ export const verifyAdminPinRPC = async (
       error: result.error,
       role: result.role || 'seller',
       verifiedVia: 'server_api',
-      token: result.token,
     };
   } catch (err: any) {
     return {
@@ -345,20 +346,70 @@ export const subscribeToSupabaseOrders = (
   }
 };
 
-
-export const fetchSupabaseOrders = async () => {
-  const client = getSupabaseClient();
-  if (!client) return { data: [], error: new Error('Supabase non configuré') };
-
-  const { data, error } = await client
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.warn('[Supabase] fetch orders error:', error);
+// Helper: Map Supabase database row to canonical Order type
+export const mapSupabaseOrderToOrder = (row: any): Order => {
+  let parsedItems = [];
+  try {
+    if (Array.isArray(row.items)) {
+      parsedItems = row.items;
+    } else if (typeof row.items === 'string') {
+      parsedItems = JSON.parse(row.items);
+    }
+  } catch {
+    parsedItems = [];
   }
 
-  return { data: data || [], error };
+  const rawNumericId = row.numeric_id;
+  const numId =
+    typeof rawNumericId === 'number'
+      ? rawNumericId
+      : rawNumericId
+      ? parseInt(String(rawNumericId), 10)
+      : row.id
+      ? parseInt(String(row.id).replace(/\D/g, ''), 10) || 0
+      : 0;
+
+  return {
+    id: String(row.id || ''),
+    numericId: numId,
+    customerName: String(row.customer_name || 'Client'),
+    phone: String(row.phone || ''),
+    mode: row.mode === 'livraison' ? 'livraison' : 'retrait',
+    pickupTime: row.pickup_time || undefined,
+    address: row.address || undefined,
+    quartier: row.quartier || undefined,
+    indications: row.indications || undefined,
+    total: Number(row.total || 0),
+    paymentMethod: row.payment_method === 'especes_livraison' ? 'especes_livraison' : 'especes_retrait',
+    status: (row.status as any) || 'received',
+    rejectionReason: row.rejection_reason || undefined,
+    notes: row.notes || undefined,
+    items: parsedItems,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
 };
+
+// Helper: Fetch orders from Supabase (client-side)
+export const fetchSupabaseOrders = async (): Promise<Order[]> => {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) {
+      console.warn('[Supabase] fetchSupabaseOrders error:', error?.message);
+      return [];
+    }
+
+    return data.map(mapSupabaseOrderToOrder);
+  } catch (err) {
+    console.warn('[Supabase] fetchSupabaseOrders exception:', err);
+    return [];
+  }
+};
+
 

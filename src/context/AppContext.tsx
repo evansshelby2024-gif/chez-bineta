@@ -23,8 +23,9 @@ import {
   testSupabaseConnection,
   syncOrderToSupabase,
   syncProductToSupabase,
-  fetchSupabaseOrders,
   subscribeToSupabaseOrders,
+  mapSupabaseOrderToOrder,
+  fetchSupabaseOrders,
   verifyAdminPinRPC,
   updateAdminPinRPC,
   signInWithSupabaseEmail,
@@ -154,6 +155,7 @@ interface AppContextType {
   loginAdmin: (pin: string) => Promise<boolean>;
   logoutAdmin: () => void;
   setAdminPin: (newPin: string) => void;
+  loadAdminOrders: (tokenOverride?: string) => Promise<Order[]>;
 
   // Store Open / Closed Status
   storeStatus: StoreStatus;
@@ -562,6 +564,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Reusable loadAdminOrders function: loads orders via /api/admin/orders with HMAC token
+  const loadAdminOrders = async (tokenOverride?: string): Promise<Order[]> => {
+    const adminToken = tokenOverride || sessionStorage.getItem('chez_bineta_admin_token');
+
+    if (adminToken) {
+      try {
+        const res = await fetch('/api/admin/orders', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data && Array.isArray(json.data)) {
+            const mappedOrders: Order[] = json.data.map(mapSupabaseOrderToOrder);
+            setOrders(mappedOrders);
+            return mappedOrders;
+          }
+        }
+      } catch (err) {
+        console.warn('[Admin Orders] Erreur lors de la récupération via /api/admin/orders:', err);
+      }
+    }
+
+    // Client-side fallback if no token or backend empty
+    try {
+      const clientOrders = await fetchSupabaseOrders();
+      if (clientOrders && clientOrders.length > 0) {
+        setOrders(clientOrders);
+        return clientOrders;
+      }
+    } catch {}
+
+    return [];
+  };
+
+  // Initial loading: If admin token exists, fetch from /api/admin/orders, else fetch client-side Supabase orders
+  useEffect(() => {
+    const adminToken = sessionStorage.getItem('chez_bineta_admin_token');
+    if (adminToken) {
+      loadAdminOrders(adminToken);
+    } else {
+      fetchSupabaseOrders().then((clientOrders) => {
+        if (clientOrders && clientOrders.length > 0) {
+          setOrders(clientOrders);
+        }
+      });
+    }
+  }, []);
+
   // Store service status (Ouvert, Fermé, Sur Réservation)
   const [storeStatus, setStoreStatusState] = useState<StoreStatus>(() => {
     try {
@@ -961,106 +1011,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('[Firestore] Orders listener warning:', err);
       });
 
-      // Load existing orders from Supabase on startup/refresh
-      const adminToken = sessionStorage.getItem('chez_bineta_admin_token');
-      if (adminToken) {
-        fetch('/api/admin/orders', {
-          headers: { Authorization: `Bearer ${adminToken}` },
-        })
-          .then((res) => res.ok ? res.json() : { data: [] })
-          .then(({ data }) => {
-            const loadedOrders: Order[] = (data || []).map((row: any) => ({
-              id: row.id,
-              numericId: row.numeric_id,
-              customerName: row.customer_name,
-              phone: row.phone,
-              mode: row.mode,
-              pickupTime: row.pickup_time,
-              address: row.address,
-              quartier: row.quartier,
-              indications: row.indications,
-              total: Number(row.total),
-              paymentMethod: row.payment_method,
-              status: row.status,
-              notes: row.notes,
-              items: row.items || [],
-              createdAt: row.created_at,
-            }));
-            if (loadedOrders.length > 0) setOrders(loadedOrders);
-          })
-          .catch(() => {});
-      } else {
-        fetchSupabaseOrders().then(({ data, error }) => {
-          if (error) return;
-          const loadedOrders: Order[] = (data || []).map((row: any) => ({
-            id: row.id,
-            numericId: row.numeric_id,
-            customerName: row.customer_name,
-            phone: row.phone,
-            mode: row.mode,
-            pickupTime: row.pickup_time,
-            address: row.address,
-            quartier: row.quartier,
-            indications: row.indications,
-            total: Number(row.total),
-            paymentMethod: row.payment_method,
-            status: row.status,
-            notes: row.notes,
-            items: row.items || [],
-            createdAt: row.created_at,
-          }));
-          if (loadedOrders.length > 0) setOrders(loadedOrders);
-        });
-      }
-
       // Also listen to Supabase Realtime if connected
       const unsubSupabase = subscribeToSupabaseOrders((payload) => {
-        if (payload.eventType === 'INSERT' && payload.new) {
-          const row = payload.new;
-          const newOrder: Order = {
-            id: row.id,
-            numericId: row.numeric_id,
-            customerName: row.customer_name,
-            phone: row.phone,
-            mode: row.mode,
-            pickupTime: row.pickup_time,
-            address: row.address,
-            quartier: row.quartier,
-            indications: row.indications,
-            total: Number(row.total),
-            paymentMethod: row.payment_method,
-            status: row.status,
-            notes: row.notes,
-            items: row.items || [],
-            createdAt: row.created_at,
-          };
-
-          setOrders((prev) => [
-            newOrder,
-            ...prev.filter((o) => o.id !== newOrder.id)
-          ]);
-
+        if (payload.eventType === 'INSERT') {
+          const newOrder = mapSupabaseOrderToOrder(payload.new);
+          setOrders((prev) => {
+            if (prev.some((o) => o.id === newOrder.id)) return prev;
+            return [newOrder, ...prev];
+          });
           if (userRoleRef.current === 'seller' || isAdminLoggedIn) {
             soundEffects.playNewOrder();
-            showToast(`⚡ Nouvelle commande : ${newOrder.id}`, 'warning');
-            setLatestRealtimeEvent({
-              type: 'NEW_ORDER',
-              order: newOrder,
-              sender: 'customer',
-              timestamp: Date.now(),
-            });
+            showToast(`⚡ Nouvelle commande Supabase : ${newOrder.id} (${newOrder.customerName})`, 'warning');
           }
-        }
-
-        if (payload.eventType === 'UPDATE' && payload.new) {
-          const row = payload.new;
-          setOrders((prev) =>
-            prev.map((o) =>
-              o.id === row.id
-                ? { ...o, status: row.status }
-                : o
-            )
-          );
+        } else if (payload.eventType === 'UPDATE') {
+          const updatedOrder = mapSupabaseOrderToOrder(payload.new);
+          setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
+        } else if (payload.eventType === 'DELETE') {
+          const deletedId = payload.old?.id;
+          if (deletedId) {
+            setOrders((prev) => prev.filter((o) => o.id !== deletedId));
+          }
         }
       });
 
@@ -1677,6 +1647,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const res = await verifyAdminPinRPC(pin);
 
     if (res.success) {
+      setIsAdminLoggedIn(true);
+      setUserRole('seller');
+      setIsRoleModalOpen(false);
+
+      // 1. Le token soit enregistré comme actuellement.
+      let currentToken = '';
       try {
         const tokenRes = await fetch('/api/admin/verify-pin', {
           method: 'POST',
@@ -1685,12 +1661,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         const tokenData = await tokenRes.json();
         if (tokenRes.ok && tokenData.token) {
+          currentToken = tokenData.token;
           sessionStorage.setItem('chez_bineta_admin_token', tokenData.token);
         }
-      } catch {}
-      setIsAdminLoggedIn(true);
-      setUserRole('seller');
-      setIsRoleModalOpen(false);
+      } catch (tokenErr) {
+        console.warn('[Admin Token] Erreur lors de la récupération du token:', tokenErr);
+      }
+
+      // 2. Les commandes soient immédiatement rechargées via /api/admin/orders avec ce token.
+      // 3. Les commandes récupérées soient correctement transformées en Order[].
+      // 4. setOrders() soit appelé avec les commandes récupérées.
+      // 5. La commande de Evan à 700 F apparaisse immédiatement après la connexion.
+      // 6. Il ne soit pas nécessaire de rafraîchir la page.
+      await loadAdminOrders(currentToken);
+
       try {
         localStorage.removeItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS);
         localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
@@ -1808,6 +1792,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loginAdmin,
         logoutAdmin,
         setAdminPin,
+        loadAdminOrders,
         storeStatus,
         setStoreStatus,
         storeClosureMessage,

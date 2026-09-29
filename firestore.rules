@@ -22,7 +22,8 @@ service cloud.firestore {
     // - Status transitions strictly controlled
     // - Public deletion is strictly FORBIDDEN (no one can wipe orders)
     match /orders/{orderId} {
-      allow read: if isValidId(orderId);
+      allow get: if isValidId(orderId);
+      allow list: if true;
 
       allow create: if isValidId(orderId)
         && incoming().keys().hasAll(['id', 'customerName', 'phone', 'mode', 'total', 'status', 'createdAt'])
